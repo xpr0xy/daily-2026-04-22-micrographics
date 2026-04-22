@@ -59,7 +59,7 @@ button:hover, button:active { opacity: 0.75; }
 </head>
 <body>
 <canvas id="hud"></canvas>
-<div id="info">MICROGRAPHICS v1.2 — CLIPPED</div>
+<div id="info">MICROGRAPHICS v1.3 — STABLE</div>
 <div id="controls">
   <button onclick="regenerate()">REGENERATE</button>
   <button onclick="exportPNG()">EXPORT PNG</button>
@@ -78,10 +78,13 @@ const R=(a,b)=>Math.random()*(b-a)+a;
 const RI=(a,b)=>Math.floor(R(a,b+1));
 const P=(a)=>a[Math.floor(Math.random()*a.length)];
 
+// seeded random for deterministic panel data
+function srand(seed){return function(){seed=(seed*16807+0)%2147483647;return(seed-1)/2147483646;};}
+
 let resizeTimer;
 function resize(){
   clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(()=>{
+  resizeTimer=setTimeout(()=>{
     dpr=window.devicePixelRatio||1;
     W=canvas.width=window.innerWidth*dpr;
     H=canvas.height=window.innerHeight*dpr;
@@ -89,372 +92,418 @@ function resize(){
     canvas.style.height=window.innerHeight+'px';
     ctx.setTransform(dpr,0,0,dpr,0,0);
     W/=dpr; H/=dpr;
-    cell = Math.min(Math.max(Math.floor(W/16), 36), 52);
+    cell=Math.min(Math.max(Math.floor(W/16),36),52);
     regenerate();
-  }, 100);
+  },100);
+}
+
+function fitText(ctx,text,maxW,size){
+  ctx.font=`${size}px 'JetBrains Mono','Courier New',monospace`;
+  let w=ctx.measureText(text).width;
+  if(w<=maxW)return text;
+  while(text.length>1){text=text.slice(0,-1);w=ctx.measureText(text+'..').width;if(w<=maxW)return text+'..';}
+  return text[0]+'.';
 }
 
 class Panel{
-  constructor(x,y,w,h){this.x=x;this.y=y;this.w=w;this.h=h;this.seed=Math.random();}
-  wrap(ctx){
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(this.x+0.5, this.y+0.5, this.w-1, this.h-1);
-    ctx.clip();
-    ctx.strokeStyle=PAL.fg; ctx.lineWidth=1;
-    ctx.strokeRect(this.x+0.5, this.y+0.5, this.w-1, this.h-1);
+  constructor(x,y,w,h){
+    this.x=x;this.y=y;this.w=w;this.h=h;
+    this.seed=Math.floor(Math.random()*2147483647);
+    this.rng=srand(this.seed);
+    this.init();
   }
-  unwrap(ctx){ ctx.restore(); }
+  init(){} // override to precompute data
+  border(ctx){
+    ctx.strokeStyle=PAL.fg;ctx.lineWidth=1;
+    ctx.strokeRect(this.x+.5,this.y+.5,this.w-1,this.h-1);
+  }
   txt(ctx,text,x,y,size=9,align='left',color=PAL.fg2,bl='top'){
     ctx.font=`${size}px 'JetBrains Mono','Courier New',monospace`;
-    ctx.fillStyle=color; ctx.textAlign=align; ctx.textBaseline=bl;
+    ctx.fillStyle=color;ctx.textAlign=align;ctx.textBaseline=bl;
     ctx.fillText(text,x,y);
   }
-  fit(txt,size){ return ctx.measureText(txt).width < this.w-12; }
+  txtFit(ctx,text,x,y,maxW,size,align='left',color=PAL.fg2,bl='top'){
+    const fitted=fitText(ctx,text,maxW,size);
+    this.txt(ctx,fitted,x,y,size,align,color,bl);
+  }
 }
 
 class DataP extends Panel{
-  draw(ctx,t){
-    this.wrap(ctx);
-    this.txt(ctx,P(EN),this.x+6,this.y+6,Math.min(9,this.h/4),'left',PAL.fg);
-    const lh=Math.max(11, this.h/5);
-    const maxL=Math.max(1, Math.floor((this.h-20)/lh));
-    for(let i=0;i<maxL;i++){
-      const y=this.y+18+i*lh;
-      if(y>this.y+this.h-6) break;
+  init(){
+    this.title=P(EN);
+    this.lines=[];
+    const n=RI(2,5);
+    for(let i=0;i<n;i++){
       const key=P(['NODE','PORT','ID']);
-      const val=key==='NODE'?NODE():key==='PORT'?RI(1,99):IDS();
-      this.txt(ctx,key,this.x+6,y,Math.min(8,this.h/6),'left',PAL.fg3);
-      this.txt(ctx,val,this.x+this.w-6,y,Math.min(8,this.h/6),'right',PAL.fg);
+      this.lines.push({key,val:key==='NODE'?NODE():key==='PORT'?RI(1,99):IDS()});
     }
-    this.unwrap(ctx);
+  }
+  draw(ctx,t){
+    this.border(ctx);
+    const fs=Math.min(9,this.h/5);
+    this.txtFit(ctx,this.title,this.x+6,this.y+6,this.w-12,fs,'left',PAL.fg);
+    const lh=Math.max(11,this.h/5);
+    for(let i=0;i<this.lines.length;i++){
+      const y=this.y+18+i*lh;
+      if(y>this.y+this.h-6)break;
+      this.txt(ctx,this.lines[i].key,this.x+6,y,Math.min(8,this.h/6),'left',PAL.fg3);
+      this.txtFit(ctx,this.lines[i].val,this.x+this.w-6,y,this.w-12,Math.min(8,this.h/6),'right',PAL.fg);
+    }
   }
 }
 
 class GaugeP extends Panel{
+  init(){this.pct=(this.rng()*100)%100;this.label=P(['PWR','LOAD','SIG']);}
   draw(ctx,t){
-    this.wrap(ctx);
-    const cx=this.x+this.w/2, cy=this.y+this.h/2;
+    this.border(ctx);
+    const cx=this.x+this.w/2,cy=this.y+this.h/2;
     const r=Math.min(this.w,this.h)/2-10;
     if(r>6){
-      const pct=(this.seed*100)%100;
-      ctx.strokeStyle=PAL.grid; ctx.lineWidth=2;
-      ctx.beginPath(); ctx.arc(cx,cy,r,-Math.PI*.75,Math.PI*.75); ctx.stroke();
-      ctx.strokeStyle=PAL.fg; ctx.lineWidth=2.5;
-      const end=-Math.PI*.75+(pct/100)*Math.PI*1.5;
-      ctx.beginPath(); ctx.arc(cx,cy,r,-Math.PI*.75,end); ctx.stroke();
-      this.txt(ctx,Math.floor(pct)+'%',cx,cy-2,Math.min(14,r/2),'center',PAL.fg,'middle');
+      ctx.strokeStyle=PAL.grid;ctx.lineWidth=2;
+      ctx.beginPath();ctx.arc(cx,cy,r,-Math.PI*.75,Math.PI*.75);ctx.stroke();
+      ctx.strokeStyle=PAL.fg;ctx.lineWidth=2.5;
+      const end=-Math.PI*.75+(this.pct/100)*Math.PI*1.5;
+      ctx.beginPath();ctx.arc(cx,cy,r,-Math.PI*.75,end);ctx.stroke();
+      this.txt(ctx,Math.floor(this.pct)+'%',cx,cy-2,Math.min(14,r/2),'center',PAL.fg,'middle');
     }
-    this.txt(ctx,P(['PWR','LOAD']),this.x+this.w/2,this.y+this.h-8,7,'center',PAL.fg2,'bottom');
-    this.unwrap(ctx);
+    this.txt(ctx,this.label,this.x+this.w/2,this.y+this.h-8,7,'center',PAL.fg2,'bottom');
   }
 }
 
 class WaveP extends Panel{
+  init(){this.phase=this.rng()*100;}
   draw(ctx,t){
-    this.wrap(ctx);
+    this.border(ctx);
     this.txt(ctx,'(ANALOG)',this.x+6,this.y+5,8,'left',PAL.fg2);
-    const pad=6, h2=this.y+this.h/2;
-    const availH=Math.max(2, this.h/2-pad-10);
+    const pad=6,h2=this.y+this.h/2;
+    const availH=Math.max(2,this.h/2-pad-10);
     const availW=this.w-pad*2;
-    ctx.strokeStyle=PAL.fg; ctx.lineWidth=1;
+    ctx.strokeStyle=PAL.fg;ctx.lineWidth=1;
     ctx.beginPath();
-    const phase = t*0.0008 + this.seed*50;
+    const ph=t*0.0003+this.phase;
     for(let i=0;i<=availW;i+=2){
       const px=this.x+pad+i;
-      const py=h2+Math.sin(i*0.04+phase)*availH*0.5+Math.sin(i*0.1+phase*0.6)*availH*0.25;
-      if(i===0) ctx.moveTo(px,py); else ctx.lineTo(px,py);
+      const py=h2+Math.sin(i*0.04+ph)*availH*.5+Math.sin(i*0.1+ph*.6)*availH*.25;
+      if(i===0)ctx.moveTo(px,py);else ctx.lineTo(px,py);
     }
     ctx.stroke();
     ctx.strokeStyle=PAL.grid;
-    ctx.beginPath(); ctx.moveTo(this.x+pad,h2); ctx.lineTo(this.x+this.w-pad,h2); ctx.stroke();
-    this.unwrap(ctx);
+    ctx.beginPath();ctx.moveTo(this.x+pad,h2);ctx.lineTo(this.x+this.w-pad,h2);ctx.stroke();
   }
 }
 
 class NetP extends Panel{
-  draw(ctx,t){
-    this.wrap(ctx);
-    this.txt(ctx,'RELAY',this.x+6,this.y+5,8);
-    const n=RI(3,5), pad=8, nodes=[];
+  init(){
+    this.nodes=[];
+    const n=RI(3,5),pad=8;
     for(let i=0;i<n;i++){
-      nodes.push({
-        x:this.x+pad+R(0,Math.max(1,this.w-pad*2)),
-        y:this.y+16+R(0,Math.max(1,this.h-24))
+      this.nodes.push({
+        x:pad+this.rng()*Math.max(1,100-pad*2),
+        y:16+this.rng()*Math.max(1,100-pad*2)
       });
     }
-    ctx.strokeStyle=PAL.fg2; ctx.lineWidth=0.5;
-    for(let i=0;i<nodes.length;i++){
-      for(let j=i+1;j<nodes.length;j++){
-        if(Math.random()>0.5){
-          ctx.beginPath(); ctx.moveTo(nodes[i].x,nodes[i].y); ctx.lineTo(nodes[j].x,nodes[j].y); ctx.stroke();
-        }
+    this.edges=[];
+    for(let i=0;i<this.nodes.length;i++){
+      for(let j=i+1;j<this.nodes.length;j++){
+        if(this.rng()>0.5)this.edges.push([i,j]);
       }
     }
-    for(const nd of nodes){
-      ctx.fillStyle=PAL.bg; ctx.beginPath(); ctx.arc(nd.x,nd.y,2,0,Math.PI*2); ctx.fill();
-      ctx.strokeStyle=PAL.fg; ctx.lineWidth=1; ctx.beginPath(); ctx.arc(nd.x,nd.y,2,0,Math.PI*2); ctx.stroke();
+  }
+  draw(ctx,t){
+    this.border(ctx);
+    this.txt(ctx,'RELAY',this.x+6,this.y+5,8);
+    const sx=(this.w-16)/100,sy=(this.h-24)/100;
+    ctx.strokeStyle=PAL.fg2;ctx.lineWidth=.5;
+    for(const [a,b]of this.edges){
+      ctx.beginPath();ctx.moveTo(this.x+8+this.nodes[a].x*sx,this.y+8+this.nodes[a].y*sy);
+      ctx.lineTo(this.x+8+this.nodes[b].x*sx,this.y+8+this.nodes[b].y*sy);ctx.stroke();
     }
-    this.unwrap(ctx);
+    for(const nd of this.nodes){
+      const nx=this.x+8+nd.x*sx,ny=this.y+8+nd.y*sy;
+      ctx.fillStyle=PAL.bg;ctx.beginPath();ctx.arc(nx,ny,2,0,Math.PI*2);ctx.fill();
+      ctx.strokeStyle=PAL.fg;ctx.lineWidth=1;ctx.beginPath();ctx.arc(nx,ny,2,0,Math.PI*2);ctx.stroke();
+    }
   }
 }
 
 class LogP extends Panel{
-  draw(ctx,t){
-    this.wrap(ctx);
-    this.txt(ctx,'LOG_'+RI(100,999),this.x+6,this.y+5,8);
-    const lines=['ACCESS','PACKET','CHECKSUM','BUFFER','SYNC'];
-    const lh=Math.max(10, this.h/6);
-    const maxL=Math.max(1, Math.floor((this.h-16)/lh));
-    for(let i=0;i<maxL;i++){
-      const y=this.y+14+i*lh;
-      if(y>this.y+this.h-4) break;
-      const ts=`${RI(0,23).toString().padStart(2,'0')}:${RI(0,59).toString().padStart(2,'0')}`;
-      this.txt(ctx,ts+' '+P(lines),this.x+6,y,Math.min(7,this.h/8),'left',i===0?PAL.fg:PAL.fg3);
+  init(){
+    this.fn='LOG_'+RI(100,999);
+    this.lines=[];
+    const msgs=['ACCESS','PACKET','CHECKSUM','BUFFER','SYNC'];
+    for(let i=0;i<5;i++){
+      this.lines.push({ts:`${RI(0,23).toString().padStart(2,'0')}:${RI(0,59).toString().padStart(2,'0')}`,msg:P(msgs)});
     }
-    this.unwrap(ctx);
+  }
+  draw(ctx,t){
+    this.border(ctx);
+    this.txtFit(ctx,this.fn,this.x+6,this.y+5,this.w-12,8);
+    const lh=Math.max(10,this.h/6);
+    const maxL=Math.max(1,Math.floor((this.h-16)/lh));
+    for(let i=0;i<Math.min(this.lines.length,maxL);i++){
+      const y=this.y+14+i*lh;
+      if(y>this.y+this.h-4)break;
+      const line=this.lines[i].ts+' '+this.lines[i].msg;
+      this.txtFit(ctx,line,this.x+6,y,this.w-12,Math.min(7,this.h/8),'left',i===0?PAL.fg:PAL.fg3);
+    }
   }
 }
 
 class CompassP extends Panel{
+  init(){this.rot=this.rng()*Math.PI*2;}
   draw(ctx,t){
-    this.wrap(ctx);
-    const cx=this.x+this.w/2, cy=this.y+this.h/2;
+    this.border(ctx);
+    const cx=this.x+this.w/2,cy=this.y+this.h/2;
     const r=Math.min(this.w,this.h)/2-8;
     if(r>8){
-      ctx.strokeStyle=PAL.fg; ctx.lineWidth=1;
+      ctx.strokeStyle=PAL.fg;ctx.lineWidth=1;
       for(let i=0;i<8;i++){
         const a=(i/8)*Math.PI*2;
         const len=i%2===0?r:r-4;
-        ctx.beginPath(); ctx.moveTo(cx+Math.cos(a)*(r-2),cy+Math.sin(a)*(r-2));
-        ctx.lineTo(cx+Math.cos(a)*len,cy+Math.sin(a)*len); ctx.stroke();
+        ctx.beginPath();ctx.moveTo(cx+Math.cos(a)*(r-2),cy+Math.sin(a)*(r-2));
+        ctx.lineTo(cx+Math.cos(a)*len,cy+Math.sin(a)*len);ctx.stroke();
       }
-      ctx.beginPath(); ctx.arc(cx,cy,r-2,0,Math.PI*2); ctx.stroke();
-      const arrowA=t*0.00015+this.seed*Math.PI*2;
-      ctx.beginPath(); ctx.moveTo(cx+Math.cos(arrowA)*r*0.55,cy+Math.sin(arrowA)*r*0.55);
-      ctx.lineTo(cx+Math.cos(arrowA+2.8)*r*0.2,cy+Math.sin(arrowA+2.8)*r*0.2);
-      ctx.lineTo(cx+Math.cos(arrowA-2.8)*r*0.2,cy+Math.sin(arrowA-2.8)*r*0.2);
-      ctx.closePath(); ctx.fillStyle=PAL.fg; ctx.fill();
+      ctx.beginPath();ctx.arc(cx,cy,r-2,0,Math.PI*2);ctx.stroke();
+      const arrowA=t*0.0001+this.rot;
+      ctx.beginPath();ctx.moveTo(cx+Math.cos(arrowA)*r*.55,cy+Math.sin(arrowA)*r*.55);
+      ctx.lineTo(cx+Math.cos(arrowA+2.8)*r*.2,cy+Math.sin(arrowA+2.8)*r*.2);
+      ctx.lineTo(cx+Math.cos(arrowA-2.8)*r*.2,cy+Math.sin(arrowA-2.8)*r*.2);
+      ctx.closePath();ctx.fillStyle=PAL.fg;ctx.fill();
     }
-    this.unwrap(ctx);
   }
 }
 
 class NumP extends Panel{
+  init(){this.num=RI(1,999).toString().padStart(3,'0');}
   draw(ctx,t){
-    this.wrap(ctx);
-    const num=RI(1,999).toString().padStart(3,'0');
-    const fs=Math.min(this.w-12, this.h-12, 48)*0.55;
+    this.border(ctx);
+    const fs=Math.min(this.w-12,this.h-12,48)*.55;
     if(fs>=10){
       ctx.font=`bold ${fs}px 'Inter',Arial,sans-serif`;
-      ctx.fillStyle=PAL.fg; ctx.textAlign='center'; ctx.textBaseline='middle';
-      ctx.fillText(num, this.x+this.w/2, this.y+this.h/2);
+      ctx.fillStyle=PAL.fg;ctx.textAlign='center';ctx.textBaseline='middle';
+      ctx.fillText(this.num,this.x+this.w/2,this.y+this.h/2);
     }
-    this.unwrap(ctx);
   }
 }
 
 class HexP extends Panel{
+  init(){
+    this.hexes=[];
+    for(let i=0;i<6;i++)this.hexes.push('0x'+IDS());
+  }
   draw(ctx,t){
-    this.wrap(ctx);
+    this.border(ctx);
     this.txt(ctx,'FIRM',this.x+6,this.y+5,8);
     const cols=Math.max(1,Math.floor((this.w-12)/48));
-    for(let i=0;i<Math.min(6,Math.floor((this.h-16)/14)*cols);i++){
-      const col=i%cols, row=Math.floor(i/cols);
-      this.txt(ctx,'0x'+IDS(),this.x+6+col*48,this.y+16+row*14,7);
+    for(let i=0;i<this.hexes.length;i++){
+      const col=i%cols,row=Math.floor(i/cols);
+      this.txtFit(ctx,this.hexes[i],this.x+6+col*48,this.y+16+row*14,this.w-12,7);
     }
-    this.unwrap(ctx);
   }
 }
 
 class BarP extends Panel{
+  init(){
+    this.title=P(['PACKET','BANDWIDTH']);
+    this.bars=[];
+    for(let i=0;i<16;i++)this.bars.push(this.rng());
+  }
   draw(ctx,t){
-    this.wrap(ctx);
-    this.txt(ctx,P(['PACKET','BANDWIDTH']),this.x+6,this.y+5,8);
-    const bw=Math.max(8,this.w-12), bh=Math.max(6,this.h-24);
-    const bx=this.x+6, by=this.y+14;
-    const bars=Math.min(24, Math.max(6, Math.floor(bw/4)));
+    this.border(ctx);
+    this.txtFit(ctx,this.title,this.x+6,this.y+5,this.w-12,8);
+    const bw=Math.max(8,this.w-12),bh=Math.max(6,this.h-24);
+    const bx=this.x+6,by=this.y+14;
+    const bars=Math.min(24,Math.max(6,Math.floor(bw/4)));
     const barW=bw/bars;
     for(let i=0;i<bars;i++){
-      const h=R(0.15,1)*bh;
+      const h=this.bars[i%this.bars.length]*bh;
       ctx.fillStyle=i%3===0?PAL.fg:PAL.fg2;
-      ctx.fillRect(bx+i*barW+0.5, by+bh-h, Math.max(1,barW-1), h);
+      ctx.fillRect(bx+i*barW+.5,by+bh-h,Math.max(1,barW-1),h);
     }
-    this.unwrap(ctx);
   }
 }
 
 class StatusP extends Panel{
+  init(){
+    const opts=[{l:'ONLINE',sub:P(JP),on:true},{l:'OFFLINE',sub:'STBY',on:false},{l:'ACTIVE',sub:'MON',on:true},{l:'ERR',sub:'ID:'+IDS(),on:false}];
+    this.st=opts[Math.floor(this.rng()*opts.length)];
+  }
   draw(ctx,t){
-    this.wrap(ctx);
-    const st=P([{l:'ONLINE',sub:P(JP),on:true},{l:'OFFLINE',sub:'STBY',on:false},{l:'ACTIVE',sub:'MON',on:true},{l:'ERR',sub:'ID:'+IDS(),on:false}]);
-    const blink=st.on&&Math.sin(t*0.001)>0;
-    const fs=Math.min(this.w-8, this.h-14, 22)*0.35;
+    this.border(ctx);
+    const blink=this.st.on&&Math.sin(t*0.001)>0;
+    const fs=Math.min(this.w-8,this.h-14,22)*.35;
     if(fs>=7){
       ctx.font=`bold ${fs}px 'Inter',Arial,sans-serif`;
-      ctx.fillStyle=blink?PAL.fg:PAL.fg3; ctx.textAlign='center'; ctx.textBaseline='middle';
-      ctx.fillText(st.l, this.x+this.w/2, this.y+this.h/2-2);
+      ctx.fillStyle=blink?PAL.fg:PAL.fg3;ctx.textAlign='center';ctx.textBaseline='middle';
+      ctx.fillText(this.st.l,this.x+this.w/2,this.y+this.h/2-2);
     }
     if(this.h>40){
-      this.txt(ctx,st.sub,this.x+this.w/2,this.y+this.h-8,7,'center',PAL.fg2,'bottom');
+      this.txtFit(ctx,this.st.sub,this.x+this.w/2,this.y+this.h-8,this.w-12,7,'center',PAL.fg2,'bottom');
     }
-    if(st.on && this.w>24){
-      ctx.fillStyle=Math.sin(t*0.002)>0?PAL.fg:PAL.bg;
-      ctx.beginPath(); ctx.arc(this.x+7,this.y+7,2,0,Math.PI*2); ctx.fill();
+    if(this.st.on&&this.w>24){
+      ctx.fillStyle=Math.sin(t*0.0008)>0?PAL.fg:PAL.bg;
+      ctx.beginPath();ctx.arc(this.x+7,this.y+7,2,0,Math.PI*2);ctx.fill();
     }
-    this.unwrap(ctx);
   }
 }
 
 class ErrorP extends Panel{
+  init(){this.pwr=RI(0,5);}
   draw(ctx,t){
-    this.wrap(ctx);
+    this.border(ctx);
     ctx.fillStyle=PAL.alert;
     ctx.fillRect(this.x+1,this.y+1,this.w-2,Math.min(14,this.h/4));
-    ctx.fillStyle='#fff'; ctx.font=`bold 8px 'JetBrains Mono',monospace`; ctx.textAlign='center';
+    ctx.fillStyle='#fff';ctx.font=`bold 8px 'JetBrains Mono',monospace`;ctx.textAlign='center';
     ctx.fillText('ERR',this.x+this.w/2,this.y+10);
     if(this.h>30){
       this.txt(ctx,'REBOOT',this.x+6,this.y+20,7);
-      this.txt(ctx,RI(0,5)+'/100',this.x+this.w-6,this.y+20,7,'right');
+      this.txtFit(ctx,this.pwr+'/100',this.x+this.w-6,this.y+20,this.w-12,7,'right');
     }
     if(this.h>40){
       const barW=Math.max(10,this.w-12);
-      ctx.fillStyle=PAL.grid; ctx.fillRect(this.x+6,this.y+32,barW,3);
-      ctx.fillStyle=PAL.alert; ctx.fillRect(this.x+6,this.y+32,barW*(RI(0,5)/100),3);
+      ctx.fillStyle=PAL.grid;ctx.fillRect(this.x+6,this.y+32,barW,3);
+      ctx.fillStyle=PAL.alert;ctx.fillRect(this.x+6,this.y+32,barW*(this.pwr/100),3);
     }
-    this.unwrap(ctx);
   }
 }
 
 class DotP extends Panel{
+  init(){
+    this.dots=[];
+    const cols=12,rows=12;
+    for(let r=0;r<rows;r++){
+      for(let c=0;c<cols;c++){
+        if(this.rng()>0.35)this.dots.push({c,r,on:this.rng()>0.3});
+      }
+    }
+  }
   draw(ctx,t){
-    this.wrap(ctx);
+    this.border(ctx);
     this.txt(ctx,P(['MEM','CFG']),this.x+6,this.y+5,8);
     const cols=Math.max(2,Math.floor((this.w-12)/6));
     const rows=Math.max(2,Math.floor((this.h-18)/6));
-    for(let r=0;r<rows;r++){
-      for(let c=0;c<cols;c++){
-        if(Math.random()>0.35){
-          ctx.fillStyle=((c+r)%7<1)?PAL.fg:PAL.fg2;
-          ctx.fillRect(this.x+6+c*6,this.y+16+r*6,2,2);
-        }
-      }
+    const frame=Math.floor(t*0.05);
+    for(const d of this.dots){
+      if(d.c>=cols||d.r>=rows)continue;
+      const flicker=((d.c+d.r+frame)%11<1);
+      ctx.fillStyle=flicker?PAL.fg:PAL.fg2;
+      ctx.fillRect(this.x+6+d.c*6,this.y+16+d.r*6,2,2);
     }
-    this.unwrap(ctx);
   }
 }
 
 class SpokeP extends Panel{
+  init(){this.spokes=RI(5,9);this.rot=this.rng()*Math.PI*2;}
   draw(ctx,t){
-    this.wrap(ctx);
+    this.border(ctx);
     this.txt(ctx,'EPOCH',this.x+6,this.y+5,8);
-    const cx=this.x+this.w/2, cy=this.y+this.h/2+1;
+    const cx=this.x+this.w/2,cy=this.y+this.h/2+1;
     const r=Math.min(this.w,this.h)/2-10;
     if(r>6){
-      const spokes=RI(5,9);
-      ctx.strokeStyle=PAL.fg2; ctx.lineWidth=0.5;
-      const rot=t*0.00008*this.seed;
-      for(let i=0;i<spokes;i++){
-        const a=(i/spokes)*Math.PI*2+rot;
-        ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(cx+Math.cos(a)*r,cy+Math.sin(a)*r); ctx.stroke();
+      ctx.strokeStyle=PAL.fg2;ctx.lineWidth=.5;
+      const rot=t*0.00005+this.rot;
+      for(let i=0;i<this.spokes;i++){
+        const a=(i/this.spokes)*Math.PI*2+rot;
+        ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(cx+Math.cos(a)*r,cy+Math.sin(a)*r);ctx.stroke();
       }
-      ctx.beginPath(); ctx.arc(cx,cy,2,0,Math.PI*2); ctx.strokeStyle=PAL.fg; ctx.lineWidth=1; ctx.stroke();
+      ctx.beginPath();ctx.arc(cx,cy,2,0,Math.PI*2);ctx.strokeStyle=PAL.fg;ctx.lineWidth=1;ctx.stroke();
     }
-    this.unwrap(ctx);
   }
 }
 
 class OverlapP extends Panel{
   draw(ctx,t){
-    this.wrap(ctx);
-    const cx=this.x+this.w/2, cy=this.y+this.h/2;
+    this.border(ctx);
+    const cx=this.x+this.w/2,cy=this.y+this.h/2;
     const r=Math.min(this.w,this.h)/3;
     if(r>5){
-      ctx.strokeStyle=PAL.fg; ctx.lineWidth=1;
-      ctx.beginPath(); ctx.arc(cx-r*0.3,cy,r,0,Math.PI*2); ctx.stroke();
-      ctx.beginPath(); ctx.arc(cx+r*0.3,cy,r,0,Math.PI*2); ctx.stroke();
+      ctx.strokeStyle=PAL.fg;ctx.lineWidth=1;
+      ctx.beginPath();ctx.arc(cx-r*.3,cy,r,0,Math.PI*2);ctx.stroke();
+      ctx.beginPath();ctx.arc(cx+r*.3,cy,r,0,Math.PI*2);ctx.stroke();
       ctx.fillStyle=PAL.fg;
       ctx.fillRect(cx-1,cy-r+2,2,r*2-4);
       ctx.fillRect(cx-r+2,cy-1,r*2-4,2);
     }
     this.txt(ctx,'SYNC',this.x+this.w/2,this.y+6,7,'center');
-    this.unwrap(ctx);
   }
 }
 
 class TempP extends Panel{
+  init(){
+    this.readings=[
+      {l:'TMP',v:R(18,35).toFixed(1)+'°C'},
+      {l:'PRS',v:R(.8,2.5).toFixed(1)+'kPa'},
+      {l:'VLT',v:R(3,5.2).toFixed(1)+'V'}
+    ];
+  }
   draw(ctx,t){
-    this.wrap(ctx);
+    this.border(ctx);
     this.txt(ctx,'SENSORS',this.x+6,this.y+5,8);
-    const readings=[{l:'TMP',v:R(18,35).toFixed(1)+'°C'},{l:'PRS',v:R(.8,2.5).toFixed(1)+'kPa'},{l:'VLT',v:R(3,5.2).toFixed(1)+'V'}];
-    const lh=Math.max(11, this.h/5);
-    const maxL=Math.min(readings.length, Math.max(1, Math.floor((this.h-16)/lh)));
+    const lh=Math.max(11,this.h/5);
+    const maxL=Math.min(this.readings.length,Math.max(1,Math.floor((this.h-16)/lh)));
     for(let i=0;i<maxL;i++){
       const y=this.y+14+i*lh;
-      if(y>this.y+this.h-4) break;
-      this.txt(ctx,readings[i].l,this.x+6,y,Math.min(8,this.h/6),'left',PAL.fg3);
-      this.txt(ctx,readings[i].v,this.x+this.w-6,y,Math.min(8,this.h/6),'right',PAL.fg);
+      if(y>this.y+this.h-4)break;
+      this.txt(ctx,this.readings[i].l,this.x+6,y,Math.min(8,this.h/6),'left',PAL.fg3);
+      this.txtFit(ctx,this.readings[i].v,this.x+this.w-6,y,this.w-12,Math.min(8,this.h/6),'right',PAL.fg);
     }
-    this.unwrap(ctx);
   }
 }
 
 class GeoP extends Panel{
   draw(ctx,t){
-    this.wrap(ctx);
+    this.border(ctx);
     this.txt(ctx,'EXPORT',this.x+6,this.y+5,8);
-    const cx=this.x+this.w/2, cy=this.y+this.h/2;
-    const s=Math.min(this.w,this.h)*0.22;
+    const cx=this.x+this.w/2,cy=this.y+this.h/2;
+    const s=Math.min(this.w,this.h)*.22;
     if(s>5){
-      ctx.strokeStyle=PAL.fg; ctx.lineWidth=1;
+      ctx.strokeStyle=PAL.fg;ctx.lineWidth=1;
       ctx.beginPath();
       for(let i=0;i<6;i++){
         const a=(i/6)*Math.PI*2;
-        const px=cx+Math.cos(a)*s, py=cy+Math.sin(a)*s;
-        if(i===0) ctx.moveTo(px,py); else ctx.lineTo(px,py);
+        const px=cx+Math.cos(a)*s,py=cy+Math.sin(a)*s;
+        if(i===0)ctx.moveTo(px,py);else ctx.lineTo(px,py);
       }
-      ctx.closePath(); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(cx-s*0.7,cy-s*0.25); ctx.lineTo(cx+s*0.7,cy+s*0.25); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(cx+s*0.7,cy-s*0.25); ctx.lineTo(cx-s*0.7,cy+s*0.25); ctx.stroke();
+      ctx.closePath();ctx.stroke();
+      ctx.beginPath();ctx.moveTo(cx-s*.7,cy-s*.25);ctx.lineTo(cx+s*.7,cy+s*.25);ctx.stroke();
+      ctx.beginPath();ctx.moveTo(cx+s*.7,cy-s*.25);ctx.lineTo(cx-s*.7,cy+s*.25);ctx.stroke();
     }
-    this.unwrap(ctx);
   }
 }
 
 class AccessP extends Panel{
+  init(){this.ok=this.rng()>0.5;this.node=NODE().split('-')[0];}
   draw(ctx,t){
-    this.wrap(ctx);
-    const ok=this.seed>0.5;
-    const label=ok?'OK':'DENIED';
-    const fs=Math.min(this.w-8, this.h-12, 24)*0.4;
+    this.border(ctx);
+    const label=this.ok?'OK':'DENIED';
+    const fs=Math.min(this.w-8,this.h-12,24)*.4;
     if(fs>=7){
-      ctx.fillStyle=ok?PAL.fg:PAL.alert;
-      ctx.font=`bold ${fs}px 'Inter',Arial,sans-serif`; ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillStyle=this.ok?PAL.fg:PAL.alert;
+      ctx.font=`bold ${fs}px 'Inter',Arial,sans-serif`;ctx.textAlign='center';ctx.textBaseline='middle';
       ctx.fillText(label,this.x+this.w/2,this.y+this.h/2-2);
     }
     if(this.h>36){
-      this.txt(ctx,NODE().split('-')[0],this.x+6,this.y+this.h-8,7,'left',PAL.fg2,'bottom');
+      this.txtFit(ctx,this.node,this.x+6,this.y+this.h-8,this.w-12,7,'left',PAL.fg2,'bottom');
     }
-    this.unwrap(ctx);
   }
 }
 
 class VertP extends Panel{
+  init(){this.label='CTRL // '+P(['ALT','SHIFT','META']);}
   draw(ctx,t){
-    this.wrap(ctx);
+    this.border(ctx);
     ctx.save();
     ctx.translate(this.x+9,this.y+this.h-6);
     ctx.rotate(-Math.PI/2);
-    ctx.font=`bold 8px 'JetBrains Mono',monospace`; ctx.fillStyle=PAL.fg; ctx.textAlign='left';
-    ctx.fillText('CTRL',0,0);
+    ctx.font=`bold 8px 'JetBrains Mono',monospace`;ctx.fillStyle=PAL.fg;ctx.textAlign='left';
+    ctx.fillText(this.label,0,0);
     ctx.restore();
-    ctx.strokeStyle=PAL.fg2; ctx.lineWidth=0.5;
+    ctx.strokeStyle=PAL.fg2;ctx.lineWidth=.5;
     const n=Math.max(2,Math.floor((this.h-14)/8));
     for(let i=0;i<n;i++){
       const y=this.y+7+i*((this.h-14)/n);
-      ctx.beginPath(); ctx.moveTo(this.x+16,y); ctx.lineTo(this.x+this.w-4,y); ctx.stroke();
+      ctx.beginPath();ctx.moveTo(this.x+16,y);ctx.lineTo(this.x+this.w-4,y);ctx.stroke();
     }
-    this.unwrap(ctx);
   }
 }
 
@@ -462,33 +511,31 @@ const TYPES=[DataP,GaugeP,WaveP,NetP,LogP,CompassP,NumP,HexP,BarP,StatusP,ErrorP
 
 function generateLayout(){
   panels=[];
-  const cols=Math.floor(W/cell), rows=Math.floor(H/cell);
-  if(cols<3 || rows<3) return;
+  const cols=Math.floor(W/cell),rows=Math.floor(H/cell);
+  if(cols<3||rows<3)return;
   const grid=Array(rows).fill(0).map(()=>Array(cols).fill(false));
   function can(x,y,w,h){if(x+w>cols||y+h>rows)return false;for(let i=y;i<y+h;i++)for(let j=x;j<x+w;j++)if(grid[i][j])return false;return true;}
   function place(x,y,w,h,p){for(let i=y;i<y+h;i++)for(let j=x;j<x+w;j++)grid[i][j]=true;p.x=x*cell;p.y=y*cell;p.w=w*cell;p.h=h*cell;panels.push(p);}
   const sizes=W<500
-    ? [[1,1],[1,2],[2,1],[2,2],[1,3],[3,1]]
-    : [[1,1],[1,2],[2,1],[2,2],[2,3],[3,2],[3,3],[3,1],[1,3],[4,2],[2,4]];
+    ?[[1,1],[1,2],[2,1],[2,2],[1,3],[3,1]]
+    :[[1,1],[1,2],[2,1],[2,2],[2,3],[3,2],[3,3],[3,1],[1,3],[4,2],[2,4]];
   for(let a=0;a<1200;a++){
-    const x=RI(0,cols-1), y=RI(0,rows-1), sz=P(sizes);
-    if(can(x,y,sz[0],sz[1])) place(x,y,sz[0],sz[1], new(P(TYPES))(0,0,0,0));
+    const x=RI(0,cols-1),y=RI(0,rows-1),sz=P(sizes);
+    if(can(x,y,sz[0],sz[1]))place(x,y,sz[0],sz[1],new(P(TYPES))(0,0,0,0));
   }
 }
 
 function draw(){
-  ctx.fillStyle=PAL.bg; ctx.fillRect(0,0,W,H);
-  // align grid to cell
-  ctx.strokeStyle=PAL.grid; ctx.lineWidth=0.5;
-  for(let x=0;x<W;x+=cell){ ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
-  for(let y=0;y<H;y+=cell){ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
+  ctx.fillStyle=PAL.bg;ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle=PAL.grid;ctx.lineWidth=.5;
+  for(let x=0;x<W;x+=cell){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+  for(let y=0;y<H;y+=cell){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
   panels.forEach(p=>p.draw(ctx,time));
-  // scanlines
   ctx.fillStyle='rgba(0,0,0,0.015)';
-  for(let y=0;y<H;y+=5) ctx.fillRect(0,y,W,1);
+  for(let y=0;y<H;y+=5)ctx.fillRect(0,y,W,1);
 }
 
-function loop(){time+=16; draw(); requestAnimationFrame(loop);}
+function loop(){time+=16;draw();requestAnimationFrame(loop);}
 function regenerate(){generateLayout();}
 function exportPNG(){
   const link=document.createElement('a');
@@ -497,7 +544,7 @@ function exportPNG(){
   link.click();
 }
 window.addEventListener('resize',resize);
-resize(); loop();
+resize();loop();
 </script>
 </body>
 </html>
