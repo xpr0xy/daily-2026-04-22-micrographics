@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MICROGRAPHICS — Generative HUD System</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #eae7e0;
+  color: #111;
+  font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif;
+  overflow: hidden;
+  width: 100vw;
+  height: 100vh;
+}
+canvas {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+}
+#controls {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 12px;
+  z-index: 100;
+}
+button {
+  background: #111;
+  color: #eae7e0;
+  border: none;
+  padding: 10px 24px;
+  font-family: 'JetBrains Mono', 'Courier New', monospace;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+button:hover { opacity: 0.8; }
+#info {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: #888;
+  z-index: 100;
+  pointer-events: none;
+}
+</style>
+</head>
+<body>
+<canvas id="hud"></canvas>
+<div id="info">MICROGRAPHICS v1.0 — PROCEDURAL INTERFACE GENERATOR</div>
+<div id="controls">
+  <button onclick="regenerate()">REGENERATE</button>
+  <button onclick="exportPNG()">EXPORT PNG</button>
+</div>
+<script>
+const canvas = document.getElementById('hud');
+const ctx = canvas.getContext('2d');
+let W, H, dpr, panels = [], time = 0;
+
+const PALETTE = {
+  bg: '#eae7e0',
+  fg: '#111111',
+  fg2: '#444444',
+  fg3: '#888888',
+  grid: '#d5d2cb',
+  alert: '#b03030'
+};
+
+const JP = ['アクセス','光電','方式','稿','オフライン','オンライン','確認済み','接続中','待機','解析中','転送','記録'];
+const EN_LABELS = ['ARCHIVE_LOG','ACCESS CONFIRMED','TARGET','MONITOR NODE','SYSTEM REBOOT','CRITICAL ERROR','VECTOR PATH','DATACLUSTER','BANDWIDTH','RELAY UNIT','SENSOR ARRAY','MODULE SYNC','EXPORT READY','DECODING','OFFLINE','ONLINE','STANDBY','ACTIVE','STABLE','SUSPENDED','PROCESSING'];
+const IDS = () => Array(4).fill(0).map(() => '0123456789ABCDEF'[Math.floor(Math.random()*16)]).join('');
+const NODE = () => Array(3).fill(0).map(() => 'ABCDEFGHJKLMNPQRSTUVWXYZ'[Math.floor(Math.random()*24)]).join('') + '-' + Math.floor(Math.random()*9000+1000);
+const RAND = (min,max) => Math.random() * (max-min) + min;
+const RINT = (min,max) => Math.floor(RAND(min,max+1));
+const PICK = (arr) => arr[Math.floor(Math.random()*arr.length)];
+
+function resize() {
+  dpr = window.devicePixelRatio || 1;
+  W = canvas.width = window.innerWidth * dpr;
+  H = canvas.height = window.innerHeight * dpr;
+  canvas.style.width = window.innerWidth + 'px';
+  canvas.style.height = window.innerHeight + 'px';
+  ctx.scale(dpr, dpr);
+  W /= dpr; H /= dpr;
+  regenerate();
+}
+
+class Panel {
+  constructor(x,y,w,h) { this.x=x; this.y=y; this.w=w; this.h=h; this.seed=Math.random(); }
+  drawBorder(ctx) {
+    ctx.strokeStyle = PALETTE.fg;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(this.x+0.5, this.y+0.5, this.w-1, this.h-1);
+  }
+  drawLabel(ctx, text, x, y, size=9, align='left', color=PALETTE.fg2) {
+    ctx.font = `${size}px 'JetBrains Mono', 'Courier New', monospace`;
+    ctx.fillStyle = color;
+    ctx.textAlign = align;
+    ctx.textBaseline = 'top';
+    ctx.fillText(text, x, y);
+  }
+}
+
+class DataPanel extends Panel {
+  draw(ctx,t) {
+    this.drawBorder(ctx);
+    const title = PICK(EN_LABELS);
+    this.drawLabel(ctx, title, this.x+8, this.y+6, 10, 'left', PALETTE.fg);
+    const lines = Math.floor(this.h/18) - 1;
+    for(let i=0;i<lines;i++) {
+      const y = this.y + 22 + i*16;
+      if(y > this.y+this.h-10) break;
+      const key = PICK(['NODE','MODULE','PORT','ID','INDEX','CHANNEL','STATE','OUTPUT','ORIGIN']);
+      const val = key==='NODE'?NODE():key==='PORT'?RINT(1,99):key==='INDEX'?RINT(100000,999999).toString().padStart(10,'0'):key==='CHANNEL'?'0'+RINT(1,9):IDS();
+      this.drawLabel(ctx, `${key}:`, this.x+8, y, 8, 'left', PALETTE.fg3);
+      this.drawLabel(ctx, val, this.x+this.w-8, y, 8, 'right', PALETTE.fg);
+      if(i===0 && Math.sin(t*0.003+this.seed*10)>0.7) {
+        ctx.fillStyle = PALETTE.fg;
+        ctx.fillRect(this.x+this.w-16, y+2, 6, 8);
+      }
+    }
+  }
+}
+
+class GaugePanel extends Panel {
+  draw(ctx,t) {
+    this.drawBorder(ctx);
+    const cx = this.x + this.w/2, cy = this.y + this.h/2;
+    const r = Math.min(this.w,this.h)/2 - 12;
+    const pct = (this.seed * 100) % 100;
+    ctx.strokeStyle = PALETTE.grid; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(cx,cy,r,-Math.PI*0.75,Math.PI*0.75); ctx.stroke();
+    ctx.strokeStyle = PALETTE.fg; ctx.lineWidth = 3;
+    const end = -Math.PI*0.75 + (pct/100)*Math.PI*1.5;
+    ctx.beginPath(); ctx.arc(cx,cy,r,-Math.PI*0.75,end); ctx.stroke();
+    this.drawLabel(ctx, Math.floor(pct)+'%', cx, cy-6, 14, 'center', PALETTE.fg);
+    this.drawLabel(ctx, PICK(['POWER','LOAD','SIGNAL','BATTERY']), cx, cy+12, 8, 'center', PALETTE.fg2);
+  }
+}
+
+class WaveformPanel extends Panel {
+  draw(ctx,t) {
+    this.drawBorder(ctx);
+    this.drawLabel(ctx, '(ANALOG)', this.x+8, this.y+6, 9, 'left', PALETTE.fg2);
+    const h2 = this.h/2, w = this.w-16;
+    ctx.strokeStyle = PALETTE.fg; ctx.lineWidth = 1;
+    ctx.beginPath();
+    for(let i=0;i<w;i++) {
+      const x = this.x+8+i;
+      const y = this.y+h2 + Math.sin(i*0.05 + t*0.005 + this.seed*100) * (h2-16) * 0.6
+                + Math.sin(i*0.13 + t*0.003) * (h2-16) * 0.3;
+      if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+    }
+    ctx.stroke();
+    ctx.strokeStyle = PALETTE.grid;
+    ctx.beginPath(); ctx.moveTo(this.x+8,this.y+h2); ctx.lineTo(this.x+this.w-8,this.y+h2); ctx.stroke();
+  }
+}
+
+class NetworkPanel extends Panel {
+  draw(ctx,t) {
+    this.drawBorder(ctx);
+    this.drawLabel(ctx, 'RELAY LINK', this.x+8, this.y+6, 9);
+    const nodes = [];
+    const n = RINT(4,8);
+    for(let i=0;i<n;i++) {
+      nodes.push({x:this.x+12+Math.random()*(this.w-24), y:this.y+20+Math.random()*(this.h-28)});
+    }
+    ctx.strokeStyle = PALETTE.fg2; ctx.lineWidth = 0.5;
+    for(let i=0;i<nodes.length;i++) {
+      for(let j=i+1;j<nodes.length;j++) {
+        if(Math.random()>0.6) {
+          ctx.beginPath(); ctx.moveTo(nodes[i].x,nodes[i].y); ctx.lineTo(nodes[j].x,nodes[j].y); ctx.stroke();
+        }
+      }
+    }
+    for(const nd of nodes) {
+      ctx.fillStyle = PALETTE.bg; ctx.beginPath(); ctx.arc(nd.x,nd.y,3,0,Math.PI*2); ctx.fill();
+      ctx.strokeStyle = PALETTE.fg; ctx.lineWidth=1; ctx.beginPath(); ctx.arc(nd.x,nd.y,3,0,Math.PI*2); ctx.stroke();
+    }
+  }
+}
+
+class LogPanel extends Panel {
+  draw(ctx,t) {
+    this.drawBorder(ctx);
+    this.drawLabel(ctx, 'LOG_'+RINT(100,999)+'.TXT', this.x+8, this.y+6, 9);
+    const lines = ['ACCESS GRANTED','DECODING STREAM...','PACKET RECEIVED','CHECKSUM VALID','BUFFER ALLOCATED','SYNC COMPLETE'];
+    const maxLines = Math.floor((this.h-20)/12);
+    for(let i=0;i<maxLines;i++) {
+      const y = this.y + 18 + i*12;
+      if(y > this.y+this.h-6) break;
+      const ts = `[${RINT(0,23).toString().padStart(2,'0')}:${RINT(0,59).toString().padStart(2,'0')}:${RINT(0,59).toString().padStart(2,'0')}]`;
+      this.drawLabel(ctx, ts+' '+PICK(lines), this.x+8, y, 7, 'left', i===maxLines-1?PALETTE.fg:PALETTE.fg3);
+    }
+  }
+}
+
+class CompassPanel extends Panel {
+  draw(ctx,t) {
+    this.drawBorder(ctx);
+    const cx = this.x+this.w/2, cy = this.y+this.h/2, r = Math.min(this.w,this.h)/2-10;
+    const dirs = ['N','E','S','W'];
+    ctx.strokeStyle = PALETTE.fg; ctx.lineWidth=1;
+    for(let i=0;i<8;i++) {
+      const a = (i/8)*Math.PI*2;
+      const len = i%2===0 ? r : r-6;
+      ctx.beginPath(); ctx.moveTo(cx+Math.cos(a)*(r-4), cy+Math.sin(a)*(r-4));
+      ctx.lineTo(cx+Math.cos(a)*len, cy+Math.sin(a)*len); ctx.stroke();
+    }
+    ctx.beginPath(); ctx.arc(cx,cy,r-4,0,Math.PI*2); ctx.stroke();
+    const arrowA = t*0.001 + this.seed*Math.PI*2;
+    ctx.beginPath(); ctx.moveTo(cx+Math.cos(arrowA)*r*0.7, cy+Math.sin(arrowA)*r*0.7);
+    ctx.lineTo(cx+Math.cos(arrowA+2.8)*r*0.3, cy+Math.sin(arrowA+2.8)*r*0.3);
+    ctx.lineTo(cx+Math.cos(arrowA-2.8)*r*0.3, cy+Math.sin(arrowA-2.8)*r*0.3);
+    ctx.closePath(); ctx.fillStyle=PALETTE.fg; ctx.fill();
+  }
+}
+
+class LargeNumberPanel extends Panel {
+  draw(ctx,t) {
+    this.drawBorder(ctx);
+    const num = RINT(1,999).toString().padStart(3,'0');
+    ctx.font = `bold ${Math.min(this.w,this.h)*0.5}px 'Inter', Arial, sans-serif`;
+    ctx.fillStyle = PALETTE.fg; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(num, this.x+this.w/2, this.y+this.h/2);
+    this.drawLabel(ctx, PICK(['VARIANT','MODULE','UNIT','SECTOR']), this.x+8, this.y+this.h-14, 8);
+  }
+}
+
+class HexPanel extends Panel {
+  draw(ctx,t) {
+    this.drawBorder(ctx);
+    this.drawLabel(ctx, 'FIRMWARE_'+RINT(1,9).toString().padStart(2,'0'), this.x+8, this.y+6, 9);
+    const hexs = [];
+    for(let i=0;i<6;i++) hexs.push('0x'+IDS()+IDS());
+    const cols = Math.floor(this.w/60);
+    hexs.forEach((h,i) => {
+      const col = i%cols, row = Math.floor(i/cols);
+      this.drawLabel(ctx, h, this.x+8+col*60, this.y+20+row*14, 8);
+    });
+    ctx.strokeStyle = PALETTE.grid; ctx.lineWidth=0.5;
+    ctx.beginPath(); ctx.moveTo(this.x+8,this.y+this.h-12); ctx.lineTo(this.x+this.w-8,this.y+this.h-12); ctx.stroke();
+  }
+}
+
+class BarcodePanel extends Panel {
+  draw(ctx,t) {
+    this.drawBorder(ctx);
+    this.drawLabel(ctx, PICK(['PACKET LOSS','BANDWIDTH','UPTIME','LATENCY']), this.x+8, this.y+6, 9);
+    const bw = this.w-16, bh = this.h-28, bx = this.x+8, by = this.y+18;
+    const bars = RINT(12,24);
+    const barW = bw/bars;
+    for(let i=0;i<bars;i++) {
+      const h = RAND(0.2,1.0)*bh;
+      ctx.fillStyle = i%3===0?PALETTE.fg:PALETTE.fg2;
+      ctx.fillRect(bx+i*barW+1, by+bh-h, barW-2, h);
+    }
+    this.drawLabel(ctx, RAND(0.1,99.9).toFixed(1)+(PICK(['%','ms','kB/s'])), this.x+this.w-8, this.y+this.h-14, 8, 'right');
+  }
+}
+
+class StatusPanel extends Panel {
+  draw(ctx,t) {
+    this.drawBorder(ctx);
+    const statuses = [
+      {label:'ONLINE', sub: PICK(JP), active:true},
+      {label:'OFFLINE', sub: 'STANDBY', active:false},
+      {label:'ACTIVE', sub: 'MONITORING', active:true},
+      {label:'ERROR', sub: 'ID: '+IDS()+'-'+IDS(), active:false}
+    ];
+    const st = statuses[Math.floor(this.seed*statuses.length)];
+    const blink = st.active && Math.sin(t*0.005)>0;
+    ctx.fillStyle = blink ? PALETTE.fg : PALETTE.fg3;
+    ctx.font = `bold ${Math.min(this.w,this.h)*0.25}px 'Inter', Arial, sans-serif`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(st.label, this.x+this.w/2, this.y+this.h/2-6);
+    this.drawLabel(ctx, st.sub, this.x+this.w/2, this.y+this.h/2+10, 8, 'center', PALETTE.fg2);
+    if(st.active) {
+      ctx.fillStyle = Math.sin(t*0.008)>0?PALETTE.fg:PALETTE.bg;
+      ctx.beginPath(); ctx.arc(this.x+10, this.y+10, 3, 0, Math.PI*2); ctx.fill();
+    }
+  }
+}
+
+class ErrorPanel extends Panel {
+  draw(ctx,t) {
+    this.drawBorder(ctx);
+    ctx.fillStyle = PALETTE.alert;
+    ctx.fillRect(this.x+1,this.y+1,this.w-2,14);
+    ctx.fillStyle = '#fff';
+    ctx.font = `bold 9px 'JetBrains Mono', monospace`;
+    ctx.textAlign = 'center';
+    ctx.fillText('CRITICAL ERROR — ID: '+IDS()+'-'+IDS(), this.x+this.w/2, this.y+11);
+    this.drawLabel(ctx, 'SYSTEM REBOOT REQUIRED', this.x+8, this.y+22, 8);
+    this.drawLabel(ctx, 'POWER: '+RINT(0,5)+'/100', this.x+8, this.y+36, 8);
+    const barW = this.w-16;
+    ctx.fillStyle = PALETTE.grid; ctx.fillRect(this.x+8, this.y+48, barW, 4);
+    ctx.fillStyle = PALETTE.alert; ctx.fillRect(this.x+8, this.y+48, barW*(RINT(0,5)/100), 4);
+  }
+}
+
+class DotGridPanel extends Panel {
+  draw(ctx,t) {
+    this.drawBorder(ctx);
+    this.drawLabel(ctx, PICK(['MEMORY','DATACLUSTER','CONFIG','INDEX']), this.x+8, this.y+6, 9);
+    const cols = Math.floor((this.w-16)/8);
+    const rows = Math.floor((this.h-24)/8);
+    for(let r=0;r<rows;r++) {
+      for(let c=0;c<cols;c++) {
+        if(Math.random() > 0.3 + this.seed*0.4) {
+          ctx.fillStyle = ((c+r+t*0.01)%7<1)?PALETTE.fg:PALETTE.fg2;
+          ctx.fillRect(this.x+8+c*8, this.y+20+r*8, 2, 2);
+        }
+      }
+    }
+  }
+}
+
+class SpokePanel extends Panel {
+  draw(ctx,t) {
+    this.drawBorder(ctx);
+    this.drawLabel(ctx, 'EPOCH', this.x+8, this.y+6, 9);
+    const cx = this.x+this.w/2, cy = this.y+this.h/2+4, r = Math.min(this.w,this.h)/2-14;
+    const spokes = RINT(6,12);
+    ctx.strokeStyle = PALETTE.fg2; ctx.lineWidth=0.5;
+    for(let i=0;i<spokes;i++) {
+      const a = (i/spokes)*Math.PI*2 + t*0.0005*this.seed;
+      ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(cx+Math.cos(a)*r, cy+Math.sin(a)*r); ctx.stroke();
+    }
+    ctx.beginPath(); ctx.arc(cx,cy,4,0,Math.PI*2); ctx.strokeStyle=PALETTE.fg; ctx.lineWidth=1; ctx.stroke();
+    const nums = [RAND(0,99).toFixed(2), RAND(100,999).toFixed(2), RAND(100,999).toFixed(2)];
+    this.drawLabel(ctx, nums.join(' / '), this.x+this.w/2, this.y+this.h-14, 7, 'center', PALETTE.fg2);
+  }
+}
+
+class CircleOverlapPanel extends Panel {
+  draw(ctx,t) {
+    this.drawBorder(ctx);
+    const cx = this.x+this.w/2, cy = this.y+this.h/2, r = Math.min(this.w,this.h)/3;
+    ctx.strokeStyle = PALETTE.fg; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.arc(cx-r*0.4,cy,r,0,Math.PI*2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx+r*0.4,cy,r,0,Math.PI*2); ctx.stroke();
+    ctx.fillStyle = PALETTE.fg;
+    ctx.fillRect(cx-2, cy-r+4, 4, r*2-8);
+    ctx.fillRect(cx-r+4, cy-2, r*2-8, 4);
+    this.drawLabel(ctx, 'SYNC', this.x+this.w/2, this.y+6, 8, 'center');
+  }
+}
+
+class TempPanel extends Panel {
+  draw(ctx,t) {
+    this.drawBorder(ctx);
+    this.drawLabel(ctx, 'SENSOR ARRAY', this.x+8, this.y+6, 9);
+    const readings = [
+      {l:'TEMP', v:RAND(18,35).toFixed(1)+'°C'},
+      {l:'PRESSURE', v:RAND(0.8,2.5).toFixed(1)+'kPa'},
+      {l:'VOLTAGE', v:RAND(3.0,5.2).toFixed(1)+'V'},
+      {l:'UPTIME', v:RINT(0,23)+':'+RINT(10,59).toString().padStart(2,'0')}
+    ];
+    readings.forEach((r,i) => {
+      this.drawLabel(ctx, r.l+':', this.x+8, this.y+22+i*16, 8, 'left', PALETTE.fg3);
+      this.drawLabel(ctx, r.v, this.x+this.w-8, this.y+22+i*16, 8, 'right', PALETTE.fg);
+    });
+  }
+}
+
+class GeometricPanel extends Panel {
+  draw(ctx,t) {
+    this.drawBorder(ctx);
+    this.drawLabel(ctx, 'EXPORT//'+RINT(1000,9999), this.x+8, this.y+6, 9);
+    const cx = this.x+this.w/2, cy = this.y+this.h/2;
+    ctx.strokeStyle = PALETTE.fg; ctx.lineWidth=1;
+    ctx.beginPath();
+    for(let i=0;i<6;i++) {
+      const a = (i/6)*Math.PI*2;
+      const px = cx+Math.cos(a)*20, py = cy+Math.sin(a)*20;
+      if(i===0) ctx.moveTo(px,py); else ctx.lineTo(px,py);
+    }
+    ctx.closePath(); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx-30,cy-10); ctx.lineTo(cx+30,cy+10); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx+30,cy-10); ctx.lineTo(cx-30,cy+10); ctx.stroke();
+    this.drawLabel(ctx, 'OUTPUT: A1', this.x+this.w/2, this.y+this.h-16, 8, 'center', PALETTE.fg2);
+  }
+}
+
+class AccessPanel extends Panel {
+  draw(ctx,t) {
+    this.drawBorder(ctx);
+    const confirmed = this.seed > 0.5;
+    ctx.fillStyle = confirmed ? PALETTE.fg : PALETTE.alert;
+    ctx.font = `bold 11px 'Inter', Arial, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText(confirmed ? 'ACCESS CONFIRMED' : 'ACCESS DENIED', this.x+this.w/2, this.y+16);
+    this.drawLabel(ctx, 'NODE: '+NODE(), this.x+8, this.y+32, 8);
+    this.drawLabel(ctx, PICK(JP), this.x+this.w-8, this.y+32, 8, 'right', PALETTE.fg2);
+    if(confirmed) {
+      ctx.strokeStyle = PALETTE.grid; ctx.lineWidth=1;
+      ctx.beginPath(); ctx.arc(this.x+this.w/2, this.y+this.h/2+6, 10, 0, Math.PI*2); ctx.stroke();
+      const prog = (t*0.002 + this.seed)%1;
+      ctx.beginPath(); ctx.arc(this.x+this.w/2, this.y+this.h/2+6, 10, -Math.PI/2, -Math.PI/2+prog*Math.PI*2); ctx.strokeStyle=PALETTE.fg; ctx.stroke();
+    }
+  }
+}
+
+class VerticalPanel extends Panel {
+  draw(ctx,t) {
+    this.drawBorder(ctx);
+    ctx.save();
+    ctx.translate(this.x+12, this.y+this.h-8);
+    ctx.rotate(-Math.PI/2);
+    ctx.font = `bold 11px 'JetBrains Mono', monospace`;
+    ctx.fillStyle = PALETTE.fg;
+    ctx.textAlign = 'left';
+    ctx.fillText('CTRL // '+PICK(['ALT','SHIFT','META']), 0, 0);
+    ctx.restore();
+    ctx.strokeStyle = PALETTE.fg2; ctx.lineWidth=0.5;
+    for(let i=0;i<5;i++) {
+      const y = this.y+10+i*((this.h-20)/5);
+      ctx.beginPath(); ctx.moveTo(this.x+20, y); ctx.lineTo(this.x+this.w-8, y); ctx.stroke();
+    }
+  }
+}
+
+const PANEL_TYPES = [
+  DataPanel, GaugePanel, WaveformPanel, NetworkPanel, LogPanel,
+  CompassPanel, LargeNumberPanel, HexPanel, BarcodePanel, StatusPanel,
+  ErrorPanel, DotGridPanel, SpokePanel, CircleOverlapPanel, TempPanel,
+  GeometricPanel, AccessPanel, VerticalPanel
+];
+
+function generateLayout() {
+  panels = [];
+  const cell = 44;
+  const cols = Math.floor(W/cell);
+  const rows = Math.floor(H/cell);
+  const grid = Array(rows).fill(0).map(() => Array(cols).fill(false));
+  
+  function canPlace(x,y,w,h) {
+    if(x+w>cols || y+h>rows) return false;
+    for(let i=y;i<y+h;i++) for(let j=x;j<x+w;j++) if(grid[i][j]) return false;
+    return true;
+  }
+  function place(x,y,w,h,panel) {
+    for(let i=y;i<y+h;i++) for(let j=x;j<x+w;j++) grid[i][j] = true;
+    panel.x = x*cell; panel.y = y*cell; panel.w = w*cell; panel.h = h*cell;
+    panels.push(panel);
+  }
+  
+  const sizes = [
+    [2,2],[2,3],[3,2],[3,3],[2,1],[1,2],[1,1],[3,1],[1,3],[4,2],[2,4]
+  ];
+  
+  for(let attempt=0; attempt<600; attempt++) {
+    const x = RINT(0, cols-1);
+    const y = RINT(0, rows-1);
+    const size = PICK(sizes);
+    const Type = PICK(PANEL_TYPES);
+    if(canPlace(x,y,size[0],size[1])) {
+      place(x,y,size[0],size[1], new Type(0,0,0,0));
+    }
+  }
+}
+
+function draw() {
+  ctx.fillStyle = PALETTE.bg;
+  ctx.fillRect(0,0,W,H);
+  
+  // subtle grid
+  ctx.strokeStyle = PALETTE.grid; ctx.lineWidth=0.5;
+  for(let x=0;x<W;x+=44) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
+  for(let y=0;y<H;y+=44) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
+  
+  panels.forEach(p => p.draw(ctx, time));
+  
+  // scanline overlay
+  ctx.fillStyle = 'rgba(0,0,0,0.03)';
+  for(let y=0;y<H;y+=3) ctx.fillRect(0,y,W,1);
+}
+
+function loop() {
+  time += 16;
+  draw();
+  requestAnimationFrame(loop);
+}
+
+function regenerate() {
+  generateLayout();
+}
+
+function exportPNG() {
+  const link = document.createElement('a');
+  link.download = 'micrographics-' + Date.now() + '.png';
+  link.href = canvas.toDataURL('image/png');
+  link.click();
+}
+
+window.addEventListener('resize', resize);
+resize();
+loop();
+</script>
+</body>
+</html>
